@@ -1,0 +1,1 @@
+{"name":"demo-hook","version":"1.0.0","scripts":{"preinstall":"node preinstall.cjs","postinstall":"node postinstall.cjs"}}

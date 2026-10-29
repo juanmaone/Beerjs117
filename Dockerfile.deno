@@ -1,0 +1,6 @@
+FROM node:24-alpine AS fixture
+COPY demos/demo-hook /tmp/demo-hook
+RUN mkdir -p /opt/beerjs && cd /tmp/demo-hook && npm pack --ignore-scripts --pack-destination /opt/beerjs
+FROM denoland/deno:2.9.3
+COPY --from=fixture /opt/beerjs /opt/beerjs
+ENV DENO_NO_UPDATE_CHECK=1 DENO_NO_PROMPT=1 NO_COLOR=1

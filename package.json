@@ -1,0 +1,33 @@
+{
+  "name": "beerjs-legado-node",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node runner-server.mjs",
+    "build": "node scripts/build.mjs",
+    "guide": "node scripts/guide.mjs",
+    "test:browser": "node scripts/browser-check.mjs",
+    "test:sync": "node scripts/sync-check.mjs",
+    "test:package": "node scripts/package-check.mjs",
+    "sync:dev": "node scripts/build-sync.mjs && wrangler dev --config sync/dev.jsonc --port 8790",
+    "sync:build": "node scripts/build-sync.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "1.0.13",
+    "docx": "^9.5.1",
+    "esbuild": "^0.28.2",
+    "fflate": "^0.8.2",
+    "jsqr": "^1.4.0",
+    "miniflare": "5.20261023.0-beta",
+    "pdfjs-dist": "^6.4.299",
+    "playwright": "^1.56.1",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "wrangler": "^4.46.0"
+  }
+}

@@ -1,0 +1,5 @@
+FROM node:24-alpine
+RUN npm install -g npm@11
+COPY demos/demo-hook /tmp/demo-hook
+RUN mkdir -p /opt/beerjs && cd /tmp/demo-hook && npm pack --ignore-scripts --pack-destination /opt/beerjs
+ENV NO_COLOR=1

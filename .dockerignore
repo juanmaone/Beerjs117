@@ -1,0 +1,9 @@
+.git
+.checks
+.local
+.env*
+node_modules
+dist
+artifacts
+.wrangler
+*.log
