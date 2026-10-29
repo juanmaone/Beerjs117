@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {inspect} from '../node-security-audit/scripts/inspect.mjs';
+import {readdir} from 'node:fs/promises';
+test('Read-only triage finds evidence, distinguishes controls and preserves incomplete coverage',async()=>{
+ const dir='test/fixtures',before=await readdir(dir,{recursive:true});
+ const risk=await inspect(dir+'/audit-risk');
+ assert.ok(risk.findings.some(f=>f.kind==='shell'));
+ assert.ok(risk.findings.some(f=>f.kind==='install-script'));
+ assert.ok(risk.findings.some(f=>f.kind==='secret-pattern'));
+ assert.ok(!JSON.stringify(risk).includes('FAKE_ONLY_NOT_A_CREDENTIAL'));
+ const controlled=await inspect(dir+'/audit-controls');
+ assert.equal(controlled.findings.length,0);
+ assert.ok(controlled.controls.some(c=>c.kind==='npm-ci'));
+ assert.ok(controlled.controls.some(c=>c.kind==='typecheck'));
+ const incomplete=await inspect(dir+'/audit-incomplete');
+ assert.equal(incomplete.findings.length,0);
+ assert.ok(incomplete.limitations.length>0);
+ assert.match(incomplete.attribution,/Autor de la skill: juanmafunes/);
+ assert.match(incomplete.attribution,/Skill: node-security-audit — versión 1\.0\.0/);
+ assert.deepEqual(await readdir(dir,{recursive:true}),before);
+});

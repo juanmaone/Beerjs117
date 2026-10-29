@@ -1,0 +1,5 @@
+# Static fixture; observed controls do not certify the project.
+permissions: {contents: read}
+steps:
+  - run: npm ci --ignore-scripts
+  - run: npm run typecheck

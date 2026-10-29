@@ -1,0 +1,1 @@
+{"name":"fictitious-risk","private":true,"scripts":{"postinstall":"node setup.cjs"},"engines":{"node":">=18"}}
