@@ -1,0 +1,11 @@
+{
+  "name": "beerjs-legado-node-sync",
+  "main": "generated-worker.mjs",
+  "no_bundle": true,
+  "compatibility_date": "2026-10-27",
+  "workers_dev": true,
+  "vars": {"ALLOWED_ORIGIN": "https://juanmaone.github.io"},
+  "durable_objects": {"bindings": [{"name": "SESSIONS", "class_name": "Session"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["Session"]}],
+  "observability": {"enabled": false}
+}

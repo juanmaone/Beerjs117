@@ -1,0 +1,94 @@
+import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+import {readFile,mkdir,writeFile} from 'node:fs/promises';
+import {browser} from './browser.mjs';
+import {createRunner} from '../runner-server.mjs';
+import {SyncClient} from '../sync-client.mjs';
+import {Session} from '../sync/worker.mjs';
+import {PNG} from 'pngjs';
+import jsQR from 'jsqr';
+import assert from 'node:assert/strict';
+import './build-sync.mjs';
+const base='http://127.0.0.1:8790',site='http://127.0.0.1:18788/';
+const config=JSON.parse(await readFile('project.config.json','utf8'));
+const worker=new Miniflare(convertV4MiniflareOptions({modules:true,script:await readFile('sync/generated-worker.mjs','utf8'),compatibilityDate:'2026-10-27',host:'127.0.0.1',port:8790,bindings:{CREATE_TOKEN:'FAKE_LOCAL_TEST_ONLY',ALLOWED_ORIGIN:'http://127.0.0.1:18788'},durableObjects:{SESSIONS:{className:'Session',useSQLite:true}}}));
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const client=new SyncClient({syncUrl:base,siteUrl:site,createToken:'FAKE_LOCAL_TEST_ONLY'});
+const server=createRunner({sync:client,version:config.version,checkHealth:async()=>({ok:true}),runDemo:async(d,v)=>({command:'SYNTHETIC TEST ONLY',stdout:`TEST ${d}/${v}`,stderr:'TEST DENIAL',exitCode:1,validation:{ok:true}})});
+let b;const sockets=[];
+try{
+ await worker.ready;
+ await new Promise(r=>server.listen(18788,'127.0.0.1',r));
+ const local=async(path,method,body)=>{const r=await fetch(site.slice(0,-1)+path,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();};
+ let state={presentationVersion:config.version,slide:0,results:{}};
+ const created=await local('/session','POST',state),id=created.session.id;
+ assert.ok(created.session.expiresAt>Date.now()+86300000);
+ assert.ok(!JSON.stringify(created).includes('publishToken'));
+ assert.equal((await fetch(base+'/sessions',{method:'POST'})).status,401);
+ assert.equal((await fetch(`${base}/sessions/${id}/state`,{method:'PUT',body:JSON.stringify(state)})).status,401);
+ assert.equal((await fetch(`${base}/sessions/${id}`,{method:'DELETE'})).status,401);
+ assert.equal((await fetch(`${base}/sessions/${id}/state`,{method:'PUT',headers:{Authorization:'Bearer '+client.session.publishToken},body:JSON.stringify({...state,notes:'PRIVATE_TEST'})})).status,400);
+ assert.equal((await fetch(base+'/run',{method:'POST'})).status,404);
+ assert.equal((await fetch(site+'run',{method:'POST',headers:{Origin:'https://attacker.invalid'},body:'{}'})).status,403);
+ const counts=new Array(100).fill(0);
+ await Promise.all(counts.map((_,i)=>new Promise((resolve,reject)=>{
+  const socket=new WebSocket(`${base.replace('http','ws')}/sessions/${id}/ws`);sockets.push(socket);
+  const timer=setTimeout(()=>reject(Error('WebSocket timeout '+i)),15000);
+  socket.onerror=()=>{clearTimeout(timer);reject(Error('Socket error '+i));};
+  socket.onmessage=e=>{const d=JSON.parse(e.data);if(d.state?.slide===7)counts[i]++;if(d.type==='state'&&d.state?.slide===0){clearTimeout(timer);resolve();}};
+ })));
+ b=await browser();
+ const errors=[];
+ const contexts=await Promise.all([0,1].map(()=>b.newContext({viewport:{width:390,height:844}})));
+ const pages=[];
+ for(const context of contexts){
+  await context.route('**/assets/config.js',route=>route.fulfill({contentType:'text/javascript',body:'globalThis.BEERJS_CONFIG='+JSON.stringify({...config,syncUrl:base})}));
+  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));pages.push(page);
+  await page.goto(created.session.url);await page.getByRole('status').filter({hasText:'Conectado'}).waitFor();
+ }
+ await pages[0].getByRole('button',{name:'Pausar seguimiento',exact:true}).click();
+ state={...state,slide:7};await local('/state','POST',state);await client.queue;
+ for(let i=0;i<50&&counts.some(n=>n===0);i++)await delay(100);
+ assert.ok(counts.every(n=>n>=1),'100 espectadores reciben actualización');
+ assert.equal(await pages[0].locator('#counter').textContent(),'1 / 17');
+ await pages[1].waitForFunction(()=>document.querySelector('#counter').textContent==='8 / 17');
+ await pages[0].getByRole('button',{name:'Volver al directo',exact:true}).click();
+ await pages[0].waitForFunction(()=>document.querySelector('#counter').textContent==='8 / 17');
+ await contexts[1].setOffline(true);await delay(100);
+ state={...state,slide:9};await local('/state','POST',state);await client.queue;
+ await contexts[1].setOffline(false);
+ await pages[1].waitForFunction(()=>document.querySelector('#counter').textContent==='10 / 17',{},{timeout:25000});
+ await pages[0].reload();await pages[0].waitForFunction(()=>document.querySelector('#counter').textContent==='10 / 17');
+ await local('/run','POST',{demo:4,variant:1});await client.queue;
+ await pages[0].waitForFunction(()=>document.querySelector('#term-4-1 .output').textContent.includes('exit=1'));
+ assert.match(await pages[0].locator('#term-4-1 .output').textContent(),/EN VIVO[\s\S]*TEST DENIAL/);
+ const before=await pages[0].locator('#term-4-1 .output').evaluate(el=>getComputedStyle(el).fontSize);
+ await pages[0].getByRole('button',{name:'Texto +',exact:true}).click();
+ assert.notEqual(await pages[0].locator('#term-4-1 .output').evaluate(el=>getComputedStyle(el).fontSize),before);
+ state={...state,slide:5,results:{'4-1':{command:'TEST',text:'<script>throw Error("XSS")</script>\nTEST BACKUP\nexit=1',source:'backup',status:'finished',exitCode:1}}};
+ await local('/state','POST',state);await client.queue;
+ await pages[0].waitForFunction(()=>document.querySelector('#term-4-1 .output').textContent.includes('RESPALDO'));
+ assert.equal(await pages[0].locator('#term-4-1 .output script').count(),0);
+ assert.equal(await pages[0].locator('.runbtn:visible').count(),0);
+ await mkdir('artifacts/sync',{recursive:true});
+ await pages[0].screenshot({path:'artifacts/sync/phone-1.png'});await pages[1].screenshot({path:'artifacts/sync/phone-2.png'});
+ // Decode the actual session QR drawn by the presenter UI.
+ const presenter=await b.newPage();await presenter.goto(site);await presenter.getByRole('button',{name:'En vivo / QR',exact:true}).click();
+ await presenter.waitForFunction(()=>document.querySelector('.live-panel canvas').width>100);
+ const canvas=await presenter.locator('.live-panel canvas').screenshot();const png=PNG.sync.read(canvas);
+ assert.equal(jsQR(new Uint8ClampedArray(png.data),png.width,png.height)?.data,created.session.url);
+ await presenter.screenshot({path:'artifacts/sync/presenter-qr.png'});
+ await local('/session','DELETE');
+ await pages[0].getByRole('status').filter({hasText:'cerrada'}).waitFor();
+ assert.equal((await fetch(`${base}/sessions/${id}/state`)).status,404);
+ // Expiry/alarm logic without waiting 24 hours (real Workerd alarm scheduling above).
+ const store=new Map([['session',{expiresAt:Date.now()-1}]]);let deleted=false;
+ const object=new Session({storage:{get:async k=>store.get(k),deleteAll:async()=>{store.clear();deleted=true;},deleteAlarm:async()=>{}},getWebSockets:()=>[]},{});
+ assert.equal((await object.fetch(new Request('https://test/sessions/id/state'))).status,410);assert.ok(deleted);
+ assert.deepEqual(errors,[]);
+ await writeFile('artifacts/sync-check.json',JSON.stringify({environment:'Workerd local + 2 contextos Chromium (teléfonos emulados)',viewers:100,delivered:counts.filter(n=>n>0).length,qrDecoded:true,tests:['late join','reconnect','individual pause','close','unauthorized publish','no remote execution','backup labels','literal text','expiry'],docker:false,internet:false},null,2));
+ console.log('Workerd: 100 espectadores, 2 teléfonos emulados, pausa, reconexión, incorporación tardía, texto, QR, cierre y autorización: OK.');
+}finally{
+ for(const socket of sockets)socket.close();await b?.close();
+ if(server.listening)await new Promise(r=>server.close(r));
+ await worker.dispose();
+}
